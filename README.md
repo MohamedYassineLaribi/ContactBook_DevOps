@@ -90,3 +90,5 @@ IMAGE_TAG=v1.0.0 docker compose up -d
 ```
 
 Les données MySQL sont conservées (volume `db_data`). Sur GitHub : relancer (Re-run) le workflow du tag `v1.0.0`.
+
+> 🔍 **Recherche** : filtre en temps réel sur nom, prénom ou email — 1 caractère suffit.
