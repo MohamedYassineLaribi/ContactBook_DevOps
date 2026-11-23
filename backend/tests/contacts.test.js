@@ -15,7 +15,7 @@ beforeEach(() => pool.execute.mockReset());
 describe('GET /health', () => {
   it('retourne ok', async () => {
     const res = await request(app).get('/health');
-    toBe(200);
+    expect(res.status).toBe(200);
     expect(res.body.status).toBe('ok');
   });
 });
