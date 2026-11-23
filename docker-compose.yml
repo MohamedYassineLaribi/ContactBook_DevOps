@@ -1,0 +1,39 @@
+services:
+  db:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-contactbook}
+      MYSQL_DATABASE: ${DB_NAME:-contactbook}
+      MYSQL_USER: ${DB_USER:-contactbook}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-contactbook}
+    # Pas de "ports:" -> la base n'est pas publiée, accessible seulement par le service "app"
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -p$$MYSQL_ROOT_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  app:
+    # Version explicite : IMAGE_TAG=v1.0.0 docker compose up -d
+    image: ${IMAGE:-contactbook}:${IMAGE_TAG:-dev}
+    build:
+      context: .
+      args:
+        APP_VERSION: ${IMAGE_TAG:-dev}
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      DB_HOST: db
+      DB_NAME: ${DB_NAME:-contactbook}
+      DB_USER: ${DB_USER:-contactbook}
+      DB_PASSWORD: ${DB_PASSWORD:-contactbook}
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  db_data:
