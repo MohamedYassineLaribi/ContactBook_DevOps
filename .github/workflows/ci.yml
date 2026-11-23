@@ -1,0 +1,108 @@
+name: CI
+
+# Déclenché sur pull request, sur main et sur tag vX.Y.Z
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  # 1. Tests + rapport JUnit en artefact (matrice : 2 versions de Node = bonus)
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [18, 20]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Installer et tester
+        working-directory: backend
+        run: |
+          npm install
+          npm test
+      - name: Rapport de tests
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rapport-tests-node${{ matrix.node }}
+          path: backend/junit.xml
+
+  # 2. Construction de l'image, seulement si les tests passent (needs)
+  build:
+    needs: test
+    if: github.ref_type != 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Nom de l'image et tag
+        run: |
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+          echo "SHA_TAG=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Construire l'image
+        run: docker build --build-arg APP_VERSION="$SHA_TAG" -t "$IMAGE:$SHA_TAG" .
+      # On ne publie que depuis main ; sur une pull request on vérifie seulement que ça se construit
+      - name: Publier l'image
+        if: github.ref == 'refs/heads/main'
+        run: docker push "$IMAGE:$SHA_TAG"
+
+  # 3. Livraison : on NE reconstruit PAS, on ajoute le tag vX.Y.Z à l'image déjà construite sur main
+  release:
+    needs: test
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Nom de l'image et tag
+        run: |
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+          echo "SHA_TAG=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Ajouter le tag de version
+        run: |
+          docker pull "$IMAGE:$SHA_TAG"
+          docker tag "$IMAGE:$SHA_TAG" "$IMAGE:${GITHUB_REF_NAME}"
+          docker push "$IMAGE:${GITHUB_REF_NAME}"
+
+  # 4. Mise en service automatique en environnement de test + contrôle de santé (bonus)
+  deploy-test:
+    needs: release
+    runs-on: ubuntu-latest
+    environment: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Mise en service et contrôle de santé
+        run: |
+          export IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          export IMAGE_TAG="${GITHUB_REF_NAME}"
+          docker compose pull app
+          docker compose up -d --no-build
+          for i in $(seq 1 30); do
+            if docker compose exec -T app wget -qO- http://localhost:3000/health; then
+              echo; echo "Santé OK"; exit 0
+            fi
+            sleep 5
+          done
+          docker compose logs
+          exit 1
